@@ -46,7 +46,7 @@ async def receive_sensor_data(data: SensorData):
 async def get_live_data():
     return latest_reading
 
-# --- GET ROUTE 1: Live Dashboard (WITH TRUE AUTO-DETECTION) ---
+# --- GET ROUTE 1: Live Dashboard (WITH CONTINUOUS AUTO-DETECT) ---
 @app.get("/", response_class=HTMLResponse)
 async def view_live_dashboard():
     html_content = """
@@ -79,9 +79,9 @@ async def view_live_dashboard():
                 #cal-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 100; justify-content: center; align-items: center; }
                 .modal-content { background: white; padding: 40px; border-radius: 12px; width: 80%; max-width: 400px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
                 .modal-title { color: #2980b9; font-size: 1.5em; font-weight: bold; margin-bottom: 20px; }
-                .step-text { font-size: 1.1em; font-weight: bold; color: #34495e; margin: 20px 0; min-height: 80px; line-height: 1.4; }
-                .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto; display: none; }
-                @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+                .step-text { font-size: 1.1em; font-weight: bold; color: #34495e; margin: 20px 0; min-height: 100px; line-height: 1.4; }
+                .btn-stop { background: #e74c3c; color: white; border: none; padding: 10px 20px; font-size: 1em; font-weight: bold; border-radius: 8px; cursor: pointer; margin-top: 10px; transition: 0.3s;}
+                .btn-stop:hover { background: #c0392b; }
             </style>
         </head>
         <body>
@@ -112,7 +112,7 @@ async def view_live_dashboard():
                         <span class="value"><span id="val-current">0.0000</span> A</span>
                     </div>
                     
-                    <button class="btn-cal" onclick="startAutoCalibration()">🔍 Auto-Detect Appliance</button>
+                    <button class="btn-cal" onclick="startContinuousMonitor()">🔍 Launch Live Event Monitor</button>
                 </div>
             </div>
 
@@ -123,13 +123,14 @@ async def view_live_dashboard():
 
             <div id="cal-modal">
                 <div class="modal-content">
-                    <div class="modal-title">AI Calibration Sequence</div>
-                    <div id="loader" class="loader"></div>
-                    <div id="step-text" class="step-text">Initializing Training Protocol...</div>
+                    <div class="modal-title">Live NILM Event Monitor</div>
+                    <div id="step-text" class="step-text">Initializing...</div>
+                    <button class="btn-stop" onclick="stopMonitor()">⏹️ End Demonstration</button>
                 </div>
             </div>
 
             <script>
+                // --- 1. SETUP THE CHART ---
                 const ctx = document.getElementById('currentChart').getContext('2d');
                 const currentChart = new Chart(ctx, {
                     type: 'line',
@@ -137,6 +138,12 @@ async def view_live_dashboard():
                     options: { responsive: true, scales: { x: { display: true }, y: { display: true, suggestedMin: 0 } }, animation: { duration: 400 } }
                 });
 
+                // --- 2. GLOBAL DETECTION VARIABLES ---
+                let isDetecting = false;
+                let isPaused = false;
+                let baseline_mA = 0;
+
+                // --- 3. FETCH DATA & RUN CONTINUOUS DETECTION ---
                 setInterval(async () => {
                     try {
                         const response = await fetch('/api/data');
@@ -147,80 +154,71 @@ async def view_live_dashboard():
                         document.getElementById('val-voltage').innerText = data.voltage.toFixed(2);
                         document.getElementById('val-current').innerText = data.current.toFixed(4);
 
-                        let current_mA = data.current * 1000;
+                        let liveCurrent_mA = data.current * 1000;
                         let now = new Date();
                         let timeString = now.toLocaleTimeString([], {hour12: false});
 
+                        // Update Chart
                         currentChart.data.labels.push(timeString);
-                        currentChart.data.datasets[0].data.push(current_mA);
-
+                        currentChart.data.datasets[0].data.push(liveCurrent_mA);
                         if (currentChart.data.labels.length > 15) {
                             currentChart.data.labels.shift();
                             currentChart.data.datasets[0].data.shift();
                         }
                         currentChart.update();
+
+                        // CONTINUOUS DETECTION LOGIC
+                        if (isDetecting && !isPaused) {
+                            let delta = liveCurrent_mA - baseline_mA;
+                            
+                            // If we detect a jump (or drop) greater than 1.5mA
+                            if (Math.abs(delta) >= 1.5) {
+                                processMatch(delta);
+                                // Set the new baseline so it can detect the NEXT button press!
+                                baseline_mA = liveCurrent_mA; 
+                            }
+                        }
                         
                     } catch (err) {}
                 }, 2000);
 
-                // --- TRUE AUTO-DETECTION ALGORITHM ---
-                let baseline_mA = 0;
-                let detectionInterval;
-
-                function startAutoCalibration() {
+                // --- 4. START / STOP MONITORING ---
+                function startContinuousMonitor() {
+                    isDetecting = true;
+                    isPaused = false;
                     const modal = document.getElementById('cal-modal');
                     const text = document.getElementById('step-text');
-                    const loader = document.getElementById('loader');
+                    
+                    baseline_mA = parseFloat(document.getElementById('val-current').innerText) * 1000;
                     
                     modal.style.display = 'flex';
-                    loader.style.display = 'block';
-                    
-                    // 1. Snapshot the baseline current right now
-                    baseline_mA = parseFloat(document.getElementById('val-current').innerText) * 1000;
-                    text.innerHTML = `Scanning Baseline Noise Floor...<br><span style='font-size:0.75em; color:#7f8c8d;'>Steady state established at ${baseline_mA.toFixed(1)} mA.</span>`;
-                    
-                    setTimeout(() => { 
-                        text.innerHTML = "🔴 Waiting for Activation...<br><span style='font-size:0.75em; color:#e74c3c;'>Please turn on an appliance now.</span>"; 
-                        
-                        // 2. Continually check the live data for a jump
-                        let attempts = 0;
-                        detectionInterval = setInterval(() => {
-                            let liveCurrent_mA = parseFloat(document.getElementById('val-current').innerText) * 1000;
-                            let delta = liveCurrent_mA - baseline_mA;
-
-                            // If we detect a jump greater than 1.5mA
-                            if (delta >= 1.5) {
-                                clearInterval(detectionInterval);
-                                processMatch(delta);
-                            } 
-                            // Timeout after 15 seconds if nothing is pressed
-                            else if (attempts > 30) {
-                                clearInterval(detectionInterval);
-                                text.innerHTML = "❌ Timeout.<br><span style='font-size:0.75em; color:#7f8c8d;'>No appliance jump detected.</span>";
-                                setTimeout(() => { modal.style.display = 'none'; }, 3000);
-                            }
-                            attempts++;
-                        }, 500);
-                    }, 2500);
+                    text.innerHTML = `Baseline Locked: <b>${baseline_mA.toFixed(1)} mA</b>.<br><br><span style='font-size:0.85em; color:#7f8c8d;'>Listening for appliance state changes...<br>Press a button on the hardware.</span>`;
                 }
 
-                // 3. Match the actual jump to our hardware parameters
+                function stopMonitor() {
+                    isDetecting = false;
+                    document.getElementById('cal-modal').style.display = 'none';
+                }
+
+                // --- 5. PROCESS THE MATCH ---
                 function processMatch(delta) {
+                    isPaused = true; // Pause detection for 4 seconds so the judge can read the screen
                     const text = document.getElementById('step-text');
-                    const loader = document.getElementById('loader');
-                    loader.style.display = 'none';
+
+                    let absDelta = Math.abs(delta);
+                    let action = delta > 0 ? "Turned ON 🟢" : "Turned OFF 🔴";
+                    let actionColor = delta > 0 ? "#27ae60" : "#e74c3c";
 
                     let appliance = "Unknown Load";
                     let matchRange = "";
 
-                    // Matching the exact thresholds from your C++ code
-                    if (delta >= 1.5 && delta <= 5.0) {
+                    if (absDelta >= 1.5 && absDelta <= 5.0) {
                         appliance = "Television";
                         matchRange = "1.5mA - 5.0mA";
-                    } else if (delta >= 7.0 && delta <= 12.0) {
+                    } else if (absDelta >= 7.0 && absDelta <= 12.0) {
                         appliance = "Air Conditioner";
                         matchRange = "7.0mA - 12.0mA";
-                    } else if (delta >= 13.0 && delta <= 18.0) {
+                    } else if (absDelta >= 13.0 && absDelta <= 18.0) {
                         appliance = "Refrigerator";
                         matchRange = "13.0mA - 18.0mA";
                     } else {
@@ -228,13 +226,21 @@ async def view_live_dashboard():
                         matchRange = "> 18.0mA";
                     }
 
-                    text.innerHTML = `✅ Signature Captured!<br><span style='font-size:0.9em; color:#27ae60;'>Δ Jump: ${delta.toFixed(1)} mA detected.</span>`;
+                    // Display the detection to the judges
+                    text.innerHTML = `
+                        <span style='font-size:1.1em; color:${actionColor}; font-weight:bold;'>⚡ Event: Δ ${delta.toFixed(1)} mA detected!</span><br><br>
+                        Matched Appliance: <b>${appliance}</b><br>
+                        State Change: <b style="color:${actionColor}">${action}</b><br>
+                        <span style='font-size:0.7em; color:#7f8c8d;'>Signature range matched: ${matchRange}</span>
+                    `;
                     
+                    // After 4 seconds, clear the screen and go back to waiting for the next button press
                     setTimeout(() => { 
-                        text.innerHTML = `Profile Match: <b>${appliance}</b><br><br><span style='font-size:0.8em; color:#7f8c8d;'>The detected jump is ${delta.toFixed(1)} mA.<br>This falls within the signature range of ${matchRange}, which is equal to a ${appliance}.</span>`; 
-                    }, 3000);
-                    
-                    setTimeout(() => { document.getElementById('cal-modal').style.display = 'none'; }, 9000);
+                        if (isDetecting) {
+                            text.innerHTML = `New Baseline Locked: <b>${baseline_mA.toFixed(1)} mA</b>.<br><br><span style='font-size:0.85em; color:#7f8c8d;'>Listening for next appliance change...</span>`;
+                            isPaused = false;
+                        }
+                    }, 4000);
                 }
             </script>
         </body>
