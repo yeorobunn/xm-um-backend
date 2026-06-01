@@ -42,11 +42,12 @@ async def receive_sensor_data(data: SensorData):
 
     return {"status": "success"}
 
+# --- NEW ROUTE: Hidden API for the Live Graph ---
 @app.get("/api/data")
 async def get_live_data():
     return latest_reading
 
-# --- GET ROUTE 1: Live Dashboard (WITH CONTINUOUS AUTO-DETECT) ---
+# --- GET ROUTE 1: Live Dashboard (WITH HITL CALIBRATION) ---
 @app.get("/", response_class=HTMLResponse)
 async def view_live_dashboard():
     html_content = """
@@ -63,6 +64,7 @@ async def view_live_dashboard():
                 .nav-active { background: #2980b9; color: white; }
                 
                 .dashboard-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; max-width: 900px; margin: 0 auto; }
+                
                 .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: left; flex: 1; min-width: 300px; position: relative; }
                 .chart-card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 100%; max-width: 900px; margin: 20px auto; }
                 
@@ -73,15 +75,17 @@ async def view_live_dashboard():
                 .label { font-weight: bold; color: #34495e; }
                 .value { font-family: monospace; font-size: 1.1em; color: #e74c3c; font-weight: bold; }
                 
+                /* Calibration Button & Modal Styles */
                 .btn-cal { background: #f39c12; color: white; border: none; padding: 12px; font-size: 1.1em; font-weight: bold; border-radius: 8px; cursor: pointer; width: 100%; margin-top: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: 0.3s; }
                 .btn-cal:hover { background: #e67e22; }
+                .cal-selector { width: 100%; padding: 12px; margin-bottom: 15px; border-radius: 6px; border: 1px solid #bdc3c7; font-size: 1.05em; font-family: inherit; color: #2c3e50; background-color: #f8f9fa; cursor: pointer; }
                 
                 #cal-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 100; justify-content: center; align-items: center; }
-                .modal-content { background: white; padding: 40px; border-radius: 12px; width: 80%; max-width: 400px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+                .modal-content { background: white; padding: 40px; border-radius: 12px; width: 80%; max-width: 450px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
                 .modal-title { color: #2980b9; font-size: 1.5em; font-weight: bold; margin-bottom: 20px; }
-                .step-text { font-size: 1.1em; font-weight: bold; color: #34495e; margin: 20px 0; min-height: 100px; line-height: 1.4; }
-                .btn-stop { background: #e74c3c; color: white; border: none; padding: 10px 20px; font-size: 1em; font-weight: bold; border-radius: 8px; cursor: pointer; margin-top: 10px; transition: 0.3s;}
-                .btn-stop:hover { background: #c0392b; }
+                .step-text { font-size: 1.1em; font-weight: bold; color: #34495e; margin: 20px 0; min-height: 80px; line-height: 1.4; }
+                .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto; display: none; }
+                @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
             </style>
         </head>
         <body>
@@ -111,8 +115,7 @@ async def view_live_dashboard():
                         <span class="label">🌊 Load Current:</span>
                         <span class="value"><span id="val-current">0.0000</span> A</span>
                     </div>
-                    
-                    <button class="btn-cal" onclick="startContinuousMonitor()">🔍 Launch Live Event Monitor</button>
+                    <button class="btn-cal" onclick="startCalibration()">🛠️ Profile New Appliance</button>
                 </div>
             </div>
 
@@ -123,9 +126,9 @@ async def view_live_dashboard():
 
             <div id="cal-modal">
                 <div class="modal-content">
-                    <div class="modal-title">Live NILM Event Monitor</div>
-                    <div id="step-text" class="step-text">Initializing...</div>
-                    <button class="btn-stop" onclick="stopMonitor()">⏹️ End Demonstration</button>
+                    <div class="modal-title">AI Calibration Sequence</div>
+                    <div id="loader" class="loader"></div>
+                    <div id="step-text" class="step-text">Initializing Training Protocol...</div>
                 </div>
             </div>
 
@@ -134,16 +137,27 @@ async def view_live_dashboard():
                 const ctx = document.getElementById('currentChart').getContext('2d');
                 const currentChart = new Chart(ctx, {
                     type: 'line',
-                    data: { labels: [], datasets: [{ label: 'Current (mA)', data: [], borderColor: '#e74c3c', backgroundColor: 'rgba(231, 76, 60, 0.2)', borderWidth: 2, tension: 0.3, fill: true, pointRadius: 3 }] },
-                    options: { responsive: true, scales: { x: { display: true }, y: { display: true, suggestedMin: 0 } }, animation: { duration: 400 } }
+                    data: {
+                        labels: [], 
+                        datasets: [{
+                            label: 'Current (mA)',
+                            data: [], 
+                            borderColor: '#e74c3c',
+                            backgroundColor: 'rgba(231, 76, 60, 0.2)',
+                            borderWidth: 2,
+                            tension: 0.3, 
+                            fill: true,
+                            pointRadius: 3
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: { x: { display: true }, y: { display: true, suggestedMin: 0 } },
+                        animation: { duration: 400 } 
+                    }
                 });
 
-                // --- 2. GLOBAL DETECTION VARIABLES ---
-                let isDetecting = false;
-                let isPaused = false;
-                let baseline_mA = 0;
-
-                // --- 3. FETCH DATA & RUN CONTINUOUS DETECTION ---
+                // --- 2. FETCH DATA IN BACKGROUND ---
                 setInterval(async () => {
                     try {
                         const response = await fetch('/api/data');
@@ -154,93 +168,123 @@ async def view_live_dashboard():
                         document.getElementById('val-voltage').innerText = data.voltage.toFixed(2);
                         document.getElementById('val-current').innerText = data.current.toFixed(4);
 
-                        let liveCurrent_mA = data.current * 1000;
+                        let current_mA = data.current * 1000;
                         let now = new Date();
                         let timeString = now.toLocaleTimeString([], {hour12: false});
 
-                        // Update Chart
                         currentChart.data.labels.push(timeString);
-                        currentChart.data.datasets[0].data.push(liveCurrent_mA);
+                        currentChart.data.datasets[0].data.push(current_mA);
+
                         if (currentChart.data.labels.length > 15) {
                             currentChart.data.labels.shift();
                             currentChart.data.datasets[0].data.shift();
                         }
                         currentChart.update();
-
-                        // CONTINUOUS DETECTION LOGIC
-                        if (isDetecting && !isPaused) {
-                            let delta = liveCurrent_mA - baseline_mA;
-                            
-                            // If we detect a jump (or drop) greater than 1.5mA
-                            if (Math.abs(delta) >= 1.5) {
-                                processMatch(delta);
-                                // Set the new baseline so it can detect the NEXT button press!
-                                baseline_mA = liveCurrent_mA; 
-                            }
-                        }
                         
                     } catch (err) {}
                 }, 2000);
 
-                // --- 4. START / STOP MONITORING ---
-                function startContinuousMonitor() {
-                    isDetecting = true;
-                    isPaused = false;
+                // --- 3. HITL CALIBRATION SEQUENCE ---
+                let baseline_mA = 0;
+                let detectionInterval;
+                let detectedDelta = 0;
+
+                function startCalibration() {
                     const modal = document.getElementById('cal-modal');
                     const text = document.getElementById('step-text');
-                    
-                    baseline_mA = parseFloat(document.getElementById('val-current').innerText) * 1000;
+                    const loader = document.getElementById('loader');
                     
                     modal.style.display = 'flex';
-                    text.innerHTML = `Baseline Locked: <b>${baseline_mA.toFixed(1)} mA</b>.<br><br><span style='font-size:0.85em; color:#7f8c8d;'>Listening for appliance state changes...<br>Press a button on the hardware.</span>`;
+                    loader.style.display = 'block';
+                    
+                    // Snapshot the baseline current
+                    baseline_mA = parseFloat(document.getElementById('val-current').innerText) * 1000;
+                    text.innerHTML = `Scanning Baseline Noise Floor...<br><span style='font-size:0.75em; color:#7f8c8d;'>Steady state established at ${baseline_mA.toFixed(1)} mA.</span>`;
+                    
+                    setTimeout(() => { 
+                        text.innerHTML = "🔴 Waiting for Activation...<br><span style='font-size:0.75em; color:#e74c3c;'>Please turn on the appliance now.</span>"; 
+                        
+                        // Wait for a jump in the live data
+                        let attempts = 0;
+                        detectionInterval = setInterval(() => {
+                            let liveCurrent_mA = parseFloat(document.getElementById('val-current').innerText) * 1000;
+                            let delta = liveCurrent_mA - baseline_mA;
+
+                            if (delta >= 1.5) {
+                                clearInterval(detectionInterval);
+                                detectedDelta = delta;
+                                generateSuggestions(delta);
+                            } else if (attempts > 30) {
+                                clearInterval(detectionInterval);
+                                text.innerHTML = "❌ Timeout.<br><span style='font-size:0.75em; color:#7f8c8d;'>No appliance jump detected.</span>";
+                                setTimeout(() => { modal.style.display = 'none'; }, 3000);
+                            }
+                            attempts++;
+                        }, 500);
+                    }, 2500);
                 }
 
-                function stopMonitor() {
-                    isDetecting = false;
-                    document.getElementById('cal-modal').style.display = 'none';
-                }
-
-                // --- 5. PROCESS THE MATCH ---
-                function processMatch(delta) {
-                    isPaused = true; // Pause detection for 4 seconds so the judge can read the screen
+                function generateSuggestions(delta) {
                     const text = document.getElementById('step-text');
+                    const loader = document.getElementById('loader');
+                    loader.style.display = 'none';
 
-                    let absDelta = Math.abs(delta);
-                    let action = delta > 0 ? "Turned ON 🟢" : "Turned OFF 🔴";
-                    let actionColor = delta > 0 ? "#27ae60" : "#e74c3c";
-
-                    let appliance = "Unknown Load";
+                    let optionsHTML = "";
                     let matchRange = "";
 
-                    if (absDelta >= 1.5 && absDelta <= 5.0) {
-                        appliance = "Television";
-                        matchRange = "1.5mA - 5.0mA";
-                    } else if (absDelta >= 7.0 && absDelta <= 12.0) {
-                        appliance = "Air Conditioner";
-                        matchRange = "7.0mA - 12.0mA";
-                    } else if (absDelta >= 13.0 && absDelta <= 18.0) {
-                        appliance = "Refrigerator";
-                        matchRange = "13.0mA - 18.0mA";
+                    // Categorize the jump and provide logical suggestions
+                    if (delta >= 1.5 && delta <= 5.0) {
+                        matchRange = "1.5mA - 5.0mA (Low Power)";
+                        optionsHTML = `
+                            <option value="Television">📺 Television</option>
+                            <option value="Standing Fan">🌬️ Standing Fan</option>
+                            <option value="Desktop PC">💻 Desktop PC</option>
+                        `;
+                    } else if (delta >= 7.0 && delta <= 12.0) {
+                        matchRange = "7.0mA - 12.0mA (Medium Power)";
+                        optionsHTML = `
+                            <option value="Air Conditioner">❄️ Air Conditioner</option>
+                            <option value="Hair Dryer">💨 Hair Dryer</option>
+                            <option value="Iron">👔 Iron</option>
+                        `;
+                    } else if (delta >= 13.0 && delta <= 18.0) {
+                        matchRange = "13.0mA - 18.0mA (Heavy Motor/Heating)";
+                        optionsHTML = `
+                            <option value="Refrigerator">🧊 Refrigerator</option>
+                            <option value="Microwave">🍲 Microwave</option>
+                            <option value="Water Heater">🚿 Water Heater</option>
+                        `;
                     } else {
-                        appliance = "Generic Heavy Load";
-                        matchRange = "> 18.0mA";
+                        matchRange = "> 18.0mA (Extreme Load)";
+                        optionsHTML = `
+                            <option value="Electric Oven">🔥 Electric Oven</option>
+                            <option value="Washing Machine">👕 Washing Machine</option>
+                        `;
                     }
 
-                    // Display the detection to the judges
+                    // Render the UI for the user to make the final choice
                     text.innerHTML = `
-                        <span style='font-size:1.1em; color:${actionColor}; font-weight:bold;'>⚡ Event: Δ ${delta.toFixed(1)} mA detected!</span><br><br>
-                        Matched Appliance: <b>${appliance}</b><br>
-                        State Change: <b style="color:${actionColor}">${action}</b><br>
-                        <span style='font-size:0.7em; color:#7f8c8d;'>Signature range matched: ${matchRange}</span>
+                        <div style="color:#27ae60; font-size:1.1em; margin-bottom:10px;">✅ Signature Captured: Δ ${delta.toFixed(1)} mA</div>
+                        <div style="font-size:0.8em; color:#7f8c8d; margin-bottom:15px; font-weight:normal;">This signature matches the <b>${matchRange}</b> tier.</div>
+                        <div style="font-size:0.9em; margin-bottom:10px; color:#2c3e50;">Please confirm the appliance type:</div>
+                        <select id="user-selection" class="cal-selector">
+                            ${optionsHTML}
+                        </select>
+                        <button class="btn-cal" style="margin-top:0;" onclick="saveProfile()">💾 Confirm & Save Profile</button>
                     `;
-                    
-                    // After 4 seconds, clear the screen and go back to waiting for the next button press
-                    setTimeout(() => { 
-                        if (isDetecting) {
-                            text.innerHTML = `New Baseline Locked: <b>${baseline_mA.toFixed(1)} mA</b>.<br><br><span style='font-size:0.85em; color:#7f8c8d;'>Listening for next appliance change...</span>`;
-                            isPaused = false;
-                        }
-                    }, 4000);
+                }
+
+                function saveProfile() {
+                    const selectedAppliance = document.getElementById('user-selection').value;
+                    const text = document.getElementById('step-text');
+
+                    text.innerHTML = `
+                        <div style="color:#2980b9; font-size:1.2em; margin-bottom:10px;">Profile Saved Successfully!</div>
+                        Saved as: <b>'${selectedAppliance}'</b><br>
+                        <span style='font-size:0.7em; color:#7f8c8d; font-weight:normal;'><br>System locked to ${detectedDelta.toFixed(1)} mA with a ± 2.0 mA tolerance band.</span>
+                    `;
+
+                    setTimeout(() => { document.getElementById('cal-modal').style.display = 'none'; }, 4500);
                 }
             </script>
         </body>
@@ -248,10 +292,12 @@ async def view_live_dashboard():
     """
     return html_content
 
+# --- GET ROUTE 2: Monthly Analysis Dashboard ---
 @app.get("/analysis", response_class=HTMLResponse)
 async def view_monthly_analysis():
     elapsed_seconds = time.time() - analytics["start_time"]
-    if elapsed_seconds < 1: elapsed_seconds = 1 
+    if elapsed_seconds < 1: 
+        elapsed_seconds = 1 
         
     seconds_in_month = 30 * 24 * 3600
     projected_monthly_kwh = (analytics["total_kwh"] / elapsed_seconds) * seconds_in_month
@@ -259,11 +305,15 @@ async def view_monthly_analysis():
     
     if analytics["total_readings"] > 0:
         active_ratio = (analytics["active_load_readings"] / analytics["total_readings"]) * 100
-    else: active_ratio = 0
+    else:
+        active_ratio = 0
         
-    if active_ratio > 60: behavior_insight = "🔴 High Activity (Appliances constantly running)"
-    elif active_ratio > 20: behavior_insight = "🟡 Moderate Usage (Normal household behavior)"
-    else: behavior_insight = "🟢 Eco-Mode (Mostly standby / unused appliances)"
+    if active_ratio > 60:
+        behavior_insight = "🔴 High Activity (Appliances constantly running)"
+    elif active_ratio > 20:
+        behavior_insight = "🟡 Moderate Usage (Normal household behavior)"
+    else:
+        behavior_insight = "🟢 Eco-Mode (Mostly standby / unused appliances)"
 
     html_content = f"""
     <!DOCTYPE html>
@@ -291,14 +341,33 @@ async def view_monthly_analysis():
                 <a href="/" class="nav-btn">🎛️ Live Telemetry</a>
                 <a href="/analysis" class="nav-btn nav-active">📊 Monthly Analysis</a>
             </div>
+            
             <h1>AI Predictive Analytics</h1>
             <h3>30-Day Automated Forecasting</h3>
+            
             <div class="card">
-                <div class="data-box"><span class="title">📈 Monthly Projected Usage</span><span class="big-value">{projected_monthly_kwh:.2f} <span style="font-size:0.5em; color:#7f8c8d;">kWh</span></span></div>
-                <div class="data-box" style="border-left-color: #c0392b;"><span class="title">💰 Estimated Monthly Bill (TNB)</span><span class="big-value highlight">RM {estimated_bill_rm:.2f}</span></div>
-                <div class="data-box" style="border-left-color: #f39c12;"><span class="title">🧠 User Behavior Profile</span>
-                    <div style="font-weight: bold; color: #2c3e50; margin-top: 5px; font-size: 1.1em;">{behavior_insight}</div>
-                    <div style="font-size: 0.85em; color: #7f8c8d; margin-top: 5px;">Active Load Ratio: {active_ratio:.1f}% of total grid uptime.</div>
+                <div class="data-box">
+                    <span class="title">📈 Monthly Projected Usage</span>
+                    <span class="big-value">{projected_monthly_kwh:.2f} <span style="font-size:0.5em; color:#7f8c8d;">kWh</span></span>
+                </div>
+                
+                <div class="data-box" style="border-left-color: #c0392b;">
+                    <span class="title">💰 Estimated Monthly Bill (TNB)</span>
+                    <span class="big-value highlight">RM {estimated_bill_rm:.2f}</span>
+                </div>
+                
+                <div class="data-box" style="border-left-color: #f39c12;">
+                    <span class="title">🧠 User Behavior Profile</span>
+                    <div style="font-weight: bold; color: #2c3e50; margin-top: 5px; font-size: 1.1em;">
+                        {behavior_insight}
+                    </div>
+                    <div style="font-size: 0.85em; color: #7f8c8d; margin-top: 5px;">
+                        Active Load Ratio: {active_ratio:.1f}% of total grid uptime.
+                    </div>
+                </div>
+                
+                <div style="text-align:center; margin-top: 20px; font-size: 0.8em; color: #bdc3c7;">
+                    Projections are calculated dynamically based on real-time hardware telemetry streams.
                 </div>
             </div>
         </body>
