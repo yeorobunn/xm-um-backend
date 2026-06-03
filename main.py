@@ -174,8 +174,8 @@ async def view_live_dashboard():
                 <a href="/analysis" class="nav-btn">🧠 AI Behavior & Savings</a>
             </div>
             
-            <h1>XM.UM Agentic Grid Node</h1>
-            <h3>Real-Time Cloud Synchronization</h3>
+            <h1>XM.UM BACKEND CLOUD</h1>
+            <h3>Real-Time Cloud Synchronization Database</h3>
             
             <div class="dashboard-grid">
                 <div class="card">
